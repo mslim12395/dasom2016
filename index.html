@@ -232,6 +232,10 @@ function localSave(){try{localStorage.setItem(SK,JSON.stringify(G));}catch(e){}}
 function localLoad(){try{const r=localStorage.getItem(SK);return r?JSON.parse(r):null;}catch(e){return null;}}
 let _savePending=false,_saveTimer=null;
 async function saveState(){
+if(!G||!G.users||Object.keys(G.users).length<5){
+  console.warn("saveState 차단: users 데이터 비정상");
+  return;
+}
 localSave();
 if(!window._db)return;
 if(_saveTimer)clearTimeout(_saveTimer);
@@ -242,6 +246,11 @@ try{await dbSet("/",G);}catch(e){console.error("FB save err",e);}
 }
 async function saveStateNow(){
 if(_saveTimer){clearTimeout(_saveTimer);_saveTimer=null;}
+// 저장 전 기본 유효성 검사 (users가 비어있으면 저장 차단)
+if(!G||!G.users||Object.keys(G.users).length<5){
+  console.warn("saveStateNow 차단: users 데이터 비정상");
+  return;
+}
 localSave();
 if(window._db){try{await dbSet("/",G);}catch(e){console.error("FB saveNow err",e);}}
 }
@@ -288,33 +297,33 @@ if(window._db && window._onValue){
   window._onValue(window._ref(window._db,"/"),function(snap){
     const fresh=snap.val();
     if(!fresh||!fresh.meta)return;
-    // 학생/투자관리인 화면에서만 외부 변경사항 반영
-    if(CR==="student"||CR==="manager"){
-      // 뉴스, 주식, 공지 등 갱신 (내 현금/보유는 직접 조작 중일 수 있어 merge)
+    // 로그인한 학생/투자관리인 화면에서만 처리
+    if((CR==="student"||CR==="manager")&&CU){
+      // ── 안전한 메타/공용 데이터만 갱신 (users는 건드리지 않음)
       G.news=fresh.news||G.news;
       G.stocks=fresh.stocks||G.stocks;
       G.history=fresh.history||G.history;
-      G.meta.cashRequests=fresh.meta.cashRequests||G.meta.cashRequests;
-      G.meta.shinmungo=fresh.meta.shinmungo||G.meta.shinmungo;
-      G.meta.phase=fresh.meta.phase||G.meta.phase;
-      G.meta.lastPriceUpdate=fresh.meta.lastPriceUpdate||G.meta.lastPriceUpdate;
-      G.meta.lastNewsUpdate=fresh.meta.lastNewsUpdate||G.meta.lastNewsUpdate;
-      // 다른 학생이 저장한 내용은 덮어씀, 내 정보는 최신 유지
-      if(fresh.users){
-        Object.keys(fresh.users).forEach(function(name){
-          if(name!==CU){G.users[name]=fresh.users[name];}
-        });
-        // 내 정보는 서버와 비교해서 현금/보유가 변경된 경우(교사 조작)만 반영
-        if(fresh.users[CU]){
-          const srv=fresh.users[CU];
-          // 교사가 조작한 경우 cash 반영 (자신이 거래 중이 아닐 때)
-          if(!window._tradeInProgress){
-            G.users[CU].cash=srv.cash;
-            G.users[CU].holdings=srv.holdings;
-          }
+      if(fresh.meta.cashRequests)G.meta.cashRequests=fresh.meta.cashRequests;
+      if(fresh.meta.shinmungo)G.meta.shinmungo=fresh.meta.shinmungo;
+      if(fresh.meta.phase)G.meta.phase=fresh.meta.phase;
+      if(fresh.meta.lastPriceUpdate)G.meta.lastPriceUpdate=fresh.meta.lastPriceUpdate;
+      if(fresh.meta.lastNewsUpdate)G.meta.lastNewsUpdate=fresh.meta.lastNewsUpdate;
+      // ── 내 계정 데이터: 교사가 직접 조작한 경우(cash/holdings 변경)만 반영
+      // 비밀번호·txLog·avgBuyPrice는 절대 서버에서 덮어쓰지 않음
+      if(fresh.users&&fresh.users[CU]&&!window._tradeInProgress){
+        const srv=fresh.users[CU];
+        const local=G.users[CU];
+        // 교사가 cash를 변경한 경우만 반영 (서버 값이 로컬과 다를 때)
+        if(typeof srv.cash==="number"&&srv.cash!==local.cash){
+          G.users[CU].cash=srv.cash;
+        }
+        // 교사가 holdings를 리셋한 경우만 반영
+        if(srv.holdings&&JSON.stringify(srv.holdings)!==JSON.stringify(local.holdings)){
+          G.users[CU].holdings=srv.holdings;
+          G.users[CU].avgBuyPrice=srv.avgBuyPrice||local.avgBuyPrice;
         }
       }
-      // 현재 보여지는 탭 자동 갱신
+      // ── 현재 탭 자동 갱신
       const activePane=document.querySelector('.tab-pane.active');
       if(activePane){
         const id=activePane.id;
@@ -362,7 +371,7 @@ if(role==="student"){const name=selStudent,pwd=document.getElementById("studentP
 }
 function logout(){CU=null;CR=null;selStudent=null;showScreen("loginScreen");}
 function showScreen(id){document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));document.getElementById(id).classList.add("active");}
-function goStudent(){showScreen("studentScreen");document.getElementById("sNavName").innerHTML=nameTag(CU);renderAll();if(G.users[CU]&&G.users[CU].firstLogin)checkFirstLogin();autoUpdateCheck();}
+function goStudent(){showScreen("studentScreen");document.getElementById("sNavName").innerHTML=nameTag(CU);renderAll();if(G.users[CU]&&G.users[CU].firstLogin)checkFirstLogin();autoUpdateCheck();startAutoCheckLoop();}
 function goManager(){
 showScreen("managerScreen");document.getElementById("mNavName").innerHTML=nameTag(CU);
 document.getElementById("mPhaseDot").className="phase-dot "+(G.meta.phase==="real"?"dot-r":"dot-p");
@@ -509,14 +518,21 @@ if(updated){
 }
 }
 function autoUpdateCheck(){
-if(!isWeekday())return;
 const now=new Date(),today=td();
 const isPast830=(now.getHours()>8||(now.getHours()===8&&now.getMinutes()>=30));
 if(!isPast830)return;
-// 주가 자동 업데이트
-if(G.meta.lastPriceUpdate!==today)updatePrices();
-// 뉴스 자동 업데이트 (주가와 같은 시각, 하루 1회)
+// 주가 자동 업데이트 (주중 월~금만)
+if(isWeekday()&&G.meta.lastPriceUpdate!==today)updatePrices();
+// 뉴스 자동 업데이트 (매일, 주말 포함 - 하루 1회)
 if(G.meta.lastNewsUpdate!==today)autoUpdateNews();
+}
+// 페이지가 열려있는 동안 1분마다 자동 체크 (처음 접속 후 8:30이 되어도 동작)
+window._autoCheckInterval=null;
+function startAutoCheckLoop(){
+if(window._autoCheckInterval)clearInterval(window._autoCheckInterval);
+window._autoCheckInterval=setInterval(function(){
+if(G&&(CR==="student"||CR==="manager"))autoUpdateCheck();
+},60000);// 1분마다
 }
 function manualUpdate(){updatePrices();renderTeacher();alert(`가격 업데이트 완료! (±${(maxVol()*100).toFixed(1)}%)`);}
 function manualNewsUpdate(){autoUpdateNews();renderTNews();renderTeacher();const biasInfo=STOCKS.map(s=>{const b=G.meta.stockBias[s.id]||0;const lbl=b>0.3?"▲ 상승 편향":b<-0.3?"▼ 하락 편향":"— 중립";return`${s.emoji} ${s.name}: ${lbl}`;}).join("\n");alert("뉴스가 업데이트되었습니다!\n기존 뉴스는 새 뉴스로 교체되었습니다.\n\n[주가 편향 자동 설정]\n"+biasInfo);}
