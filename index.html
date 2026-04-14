@@ -287,6 +287,18 @@ Object.keys(G.users||{}).forEach(n=>{
 if(!G.users[n].txLog)G.users[n].txLog=[];
 if(!G.users[n].holdings)G.users[n].holdings={semi:0,food:0,ent:0};
 if(!G.users[n].avgBuyPrice)G.users[n].avgBuyPrice={semi:0,food:0,ent:0};
+// 이름표 관련 필드 누락 시 보충 (신규 필드 추가 대응)
+if(!G.users[n].customEmoji)G.users[n].customEmoji=DEF_MAP[n]||"🌟";
+if(!G.users[n].customFont)G.users[n].customFont="default";
+if(!G.users[n].ownedEmojis||!G.users[n].ownedEmojis.length)G.users[n].ownedEmojis=[G.users[n].customEmoji];
+if(!G.users[n].ownedFonts||!G.users[n].ownedFonts.length)G.users[n].ownedFonts=["default"];
+// 현재 적용된 글씨체/이모지가 보유목록에 없으면 보유목록에 추가 (구매 후 데이터 불일치 방지)
+if(G.users[n].customFont&&!G.users[n].ownedFonts.includes(G.users[n].customFont)){
+  G.users[n].ownedFonts=[...G.users[n].ownedFonts,G.users[n].customFont];
+}
+if(G.users[n].customEmoji&&!G.users[n].ownedEmojis.includes(G.users[n].customEmoji)){
+  G.users[n].ownedEmojis=[...G.users[n].ownedEmojis,G.users[n].customEmoji];
+}
 });
 buildStudentGrid();
 buildManagerGrid();
@@ -325,6 +337,33 @@ if(window._db && window._onValue){
         if(srv.holdings&&srvLastTx>=localLastTx&&JSON.stringify(srv.holdings)!==JSON.stringify(local.holdings)){
           G.users[CU].holdings=srv.holdings;
           G.users[CU].avgBuyPrice=srv.avgBuyPrice||local.avgBuyPrice;
+        }
+        // 이름표(글씨체·이모지·보유목록)는 로컬 저장값이 더 최신일 수 있으므로
+        // 서버값이 로컬보다 더 많이 보유한 경우에만 반영 (구매 후 다른 기기 접속 시 복원)
+        if(srv.customFont&&srv.customFont!="default"&&local.customFont==="default"){
+          G.users[CU].customFont=srv.customFont;
+        }
+        if(srv.customEmoji&&srv.customEmoji!==local.customEmoji&&!local.customEmoji){
+          G.users[CU].customEmoji=srv.customEmoji;
+        }
+        // ownedFonts: 서버에 있는 항목 중 로컬에 없는 것만 추가 (구매 내역 복원)
+        if(srv.ownedFonts&&Array.isArray(srv.ownedFonts)){
+          const localFonts=local.ownedFonts||["default"];
+          const merged=[...new Set([...localFonts,...srv.ownedFonts])];
+          if(merged.length>localFonts.length)G.users[CU].ownedFonts=merged;
+          // 서버의 현재 글씨체가 내가 보유한 것이고 로컬이 기본값이면 복원
+          if(srv.customFont&&merged.includes(srv.customFont)&&local.customFont==="default"){
+            G.users[CU].customFont=srv.customFont;
+          }
+        }
+        // ownedEmojis: 서버에 있는 항목 중 로컬에 없는 것만 추가
+        if(srv.ownedEmojis&&Array.isArray(srv.ownedEmojis)){
+          const localEmojis=local.ownedEmojis||[];
+          const merged=[...new Set([...localEmojis,...srv.ownedEmojis])];
+          if(merged.length>localEmojis.length)G.users[CU].ownedEmojis=merged;
+          if(srv.customEmoji&&merged.includes(srv.customEmoji)&&!local.customEmoji){
+            G.users[CU].customEmoji=srv.customEmoji;
+          }
         }
       }
       // ── 순위 계산을 위해 다른 학생들의 cash/holdings도 최신으로 갱신 (읽기 전용)
@@ -563,7 +602,9 @@ function renderTRequests(){const all=[...(G.meta.cashRequests||[])].reverse();co
 function teacherProcessReq(id,status){const req=(G.meta.cashRequests||[]).find(r=>r.id===id);if(!req||req.status!=="pending")return;if(status==="done"){if(G.meta.phase!=="real"){alert("실전 기간에만 처리 가능합니다");return;}const u=G.users[req.student],cur=u.cash||0;if(req.type==="withdraw"&&cur<req.amt){alert("잔액 부족");return;}u.cash=req.type==="deposit"?cur+req.amt:cur-req.amt;G.meta.cashioLog=[...(G.meta.cashioLog||[]),{date:td(),by:"교사",target:req.student,type:req.type,amount:req.amt,memo:`요청처리: ${req.memo}`}];const tlog={id:Date.now(),type:req.type,amount:req.amt,memo:req.memo,date:td()};u.txLog=[...(u.txLog||[]),tlog];if(u.txLog.length>100)u.txLog=u.txLog.slice(-100);}req.status=status;req.processedBy="교사";req.processedDate=td();saveState();renderTRequests();alert(status==="done"?"처리 완료!":"거절 완료!");}
 function renderTStudents(){document.getElementById("tStudentTable").innerHTML=[...ALL_MEMBERS].map(name=>{const tot=totAsset(name),pp=profitPct(name);const ppStr=pp!==null?(pp>=0?"+":"")+pp.toFixed(1)+"%":"-";const ppCol=pp>0?"#991b1b":pp<0?"#166534":"#9ca3af";return`<tr><td>${nameTag(name)}</td><td>${fn(G.users[name].cash)}</td><td>${fn(tot)}</td><td style="color:${ppCol}">${ppStr}</td></tr>`;}).join("");const allOpt=[...ALL_MEMBERS].map(n=>`<option value="${n}">${n}</option>`).join("");document.getElementById("resetPwdSel").innerHTML=`<option value="__all__">전체 학생</option>`+allOpt;document.getElementById("resetInvSel").innerHTML=`<option value="__all__">전체 학생</option>`+allOpt;
   const rebuildSel=document.getElementById("rebuildInvSel");
-  if(rebuildSel)rebuildSel.innerHTML=`<option value="__all__">전체 학생</option>`+allOpt;
+  // 복원 select: 개별 선택 시 선생님(시험용)도 가능, "전체 학생"에서는 제외
+  const rebuildOpt=ALL_STUDENTS.map(n=>`<option value="${n}">${n}</option>`).join("");
+  if(rebuildSel)rebuildSel.innerHTML=`<option value="__all__">전체 학생 (시험용 제외)</option>`+rebuildOpt;
 }
 function renderTCashio(){document.getElementById("cashioTarget").innerHTML=["전체 학생",...ALL_MEMBERS].map(n=>`<option value="${n}">${n}</option>`).join("");}
 function renderTMarket(){let h="";STOCKS.forEach(s=>{const st=G.stocks[s.id];h+=`<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f3f4f6;"><span style="font-weight:600;">${s.emoji} ${s.name}</span><span style="font-weight:600;">${fn(st.price)} 조개</span></div>`;});document.getElementById("tMarketDetail").innerHTML=h;document.getElementById("setPriceSel").innerHTML=STOCKS.map(s=>`<option value="${s.id}">${s.emoji} ${s.name}</option>`).join("");}
@@ -695,7 +736,8 @@ function rebuildHoldingsFromTxLogUI(){
 
 function rebuildHoldingsFromTxLog(){
   const target=document.getElementById("resetInvSel").value;
-  const targets=target==="__all__"?ALL_STUDENTS:[target];
+  // 선생님(시험용)은 복원 대상에서 제외
+  const targets=target==="__all__"?ALL_STUDENTS.filter(n=>n!==TEST_STUDENT):[target];
   if(!confirm(`${target==="__all__"?"전체 학생":target}의 거래내역을 기반으로 보유 주식을 재계산합니다.\n\n이 작업은 txLog(매수/매도 기록)를 순서대로 재적용해 holdings와 평균단가를 새로 계산합니다.\n현금은 변경되지 않습니다. 계속할까요?`))return;
   
   const results=[];
