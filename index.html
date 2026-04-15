@@ -1796,6 +1796,7 @@ function buildTabs(){
       ...(showDonation?[{id:'donation',l:'🌳 기부',icon:'🌳',short:'기부'}]:[]),
       {id:'rank',l:'🏆 랭킹',icon:'🏆',short:'랭킹'},
     ];
+    tabs.push({id:'request',l:'💸 입출금요청',icon:'💸',short:'입출금요청'});
     if(isPolice) tabs.push({id:'patrol',l:'🚔 순찰일지',icon:'🚔',short:'순찰'});
     if(isVice) tabs.push({id:'vice',l:'📋 부담임',icon:'📋',short:'부담임'});
     if(cu.isCashier) tabs.push({id:'cashier',l:'💰 입출금',icon:'💰',short:'입출금'});
@@ -1885,6 +1886,7 @@ function renderTab(id,el){
     case'donation':rDonation(el);break;
     case'teacher':rTeacher(el);break;
     case'cashier':rCashier(el);break;
+    case'request':rRequest(el);break;
     case'vice':   rVice(el);break;
     case'patrol': lazyLoadPatrol(el,()=>rPatrol(el));break;
     case'shinmungo': rShinmungo(el);break;
@@ -2201,7 +2203,7 @@ function reqCA(type){
       if(!isD&&amt>st.bal){showToast('투자 가능 금액 부족');return;}
       state.pd.push({id:Date.now(),from:cu.name,to:cu.name,amt,type,st:'pending',date:dStr()});
       set(ref(db,ROOT+'/pd'),state.pd).catch(()=>{});
-      showToast('요청이 전달되었습니다!');closeModal();switchTab('portfolio');
+      showToast('요청이 전달되었습니다!');closeModal();switchTab('request');
     }},{l:'취소',c:'bs',f:closeModal}
   ]);
 }
@@ -4139,6 +4141,64 @@ function addTxLog(type,name,amt,by,note){
 }
 
 let showTxLog=false;
+function rRequest(el){
+  const st=state.students[cu.name]||{};
+  const myPd=(state.pd||[]).filter(r=>r.from===cu.name);
+  const pending=myPd.filter(r=>r.st==='pending');
+  const done=myPd.filter(r=>r.st!=='pending').slice(-10).reverse();
+
+  let h=`<div class="card"><div class="ct">💸 입출금 요청</div>`;
+
+  // 새 요청 버튼
+  h+=`<div class="flex gap2" style="margin-bottom:1rem;">
+    <button class="btn bsuc" style="flex:1;" onclick="reqCA('deposit')">📥 입금 요청</button>
+    <button class="btn bdan" style="flex:1;" onclick="reqCA('withdraw')">📤 출금 요청</button>
+  </div>`;
+
+  // 현재 잔액 표시
+  h+=`<div style="background:var(--g50);border-radius:10px;padding:.75rem 1rem;margin-bottom:.9rem;display:flex;justify-content:space-between;align-items:center;">
+    <span class="tsm tg">현재 투자 가능 금액</span>
+    <span class="tsm fb tp">${fE2(st.bal||0)}</span>
+  </div>`;
+
+  // 대기 중인 내 요청
+  h+=`<div class="tst">대기 중인 요청 <span class="pbg">${pending.length}</span></div>`;
+  if(pending.length){
+    pending.forEach(r=>{
+      h+=`<div class="cr">
+        <div class="ci">
+          <div class="cn">${r.type==='deposit'?'📥 입금':'📤 출금'} 요청</div>
+          <div class="cd">${fE(r.amt)} · ${r.date}</div>
+        </div>
+        <span class="pbg">대기중</span>
+      </div>`;
+    });
+  } else {
+    h+=`<div class="empty">대기 중인 요청이 없습니다.</div>`;
+  }
+  h+=`</div>`;
+
+  // 처리된 최근 요청 내역
+  if(done.length){
+    h+=`<div class="card"><div class="ct">📋 최근 처리 내역</div>`;
+    done.forEach(r=>{
+      const approved=r.st==='approved';
+      const label=approved?'✅ 승인':'❌ 거절';
+      const col=approved?'var(--suc)':'var(--dan)';
+      h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--g200);font-size:.83rem;">
+        <div>
+          <span style="font-weight:600;">${r.type==='deposit'?'📥 입금':'📤 출금'}</span>
+          <span style="color:var(--g500);margin-left:.4rem;">${fE(r.amt)} · ${r.date}</span>
+        </div>
+        <span style="font-weight:700;color:${col};">${label}</span>
+      </div>`;
+    });
+    h+=`</div>`;
+  }
+
+  el.innerHTML=h;
+}
+
 function rCashier(el){
   const pnd=(state.pd||[]).filter(r=>r.st==='pending');
   const txLog=state.txLog||[];
